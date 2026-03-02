@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
 import { enterpriseCustomers, enterpriseCreditTransactions } from '@/db/schema';
-import { desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { requireAdmin } from '@/lib/admin-auth';
 
 type Params = { params: Promise<{ id: string }> };
@@ -43,6 +43,8 @@ export async function GET(request: NextRequest, { params }: Params) {
 }
 
 export async function POST(request: NextRequest, { params }: Params) {
+  // Business rule: credit adjustments are an admin-only operation.
+  // This is enforced here at the data layer, independent of upstream auth.
   const authError = requireAdmin(request);
   if (authError) return authError;
 
@@ -51,7 +53,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { amount, description } = body;
 
   if (typeof amount !== 'number' || amount === 0) {
-    return NextResponse.json({ error: 'amount must be a non-zero number (positive = add, negative = deduct)' }, { status: 400 });
+    return NextResponse.json(
+      { error: 'amount must be a non-zero number (positive = add, negative = deduct)' },
+      { status: 400 }
+    );
   }
 
   const customer = await db.query.enterpriseCustomers.findFirst({
@@ -59,30 +64,51 @@ export async function POST(request: NextRequest, { params }: Params) {
   });
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  const newBalance = customer.creditBalance + amount;
-  if (newBalance < 0) {
-    return NextResponse.json({ error: 'Insufficient credits for deduction' }, { status: 400 });
-  }
-
   const actionType = amount > 0 ? 'admin_add' : 'admin_deduct';
 
-  await db.update(enterpriseCustomers)
-    .set({ creditBalance: newBalance, updatedAt: new Date() })
-    .where(eq(enterpriseCustomers.id, customerId));
+  try {
+    const result = await db.transaction(async (tx) => {
+      // Atomic update: the arithmetic happens in a single SQL statement so
+      // concurrent requests cannot interleave a read-compute-write cycle.
+      // The WHERE condition on credit_balance guarantees the balance never
+      // goes negative without a separate round-trip check (TOCTOU-safe).
+      const [updated] = await tx
+        .update(enterpriseCustomers)
+        .set({
+          creditBalance: sql`credit_balance + ${amount}`,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(enterpriseCustomers.id, customerId),
+            sql`credit_balance + ${amount} >= 0`
+          )
+        )
+        .returning({ creditBalance: enterpriseCustomers.creditBalance });
 
-  const [txn] = await db.insert(enterpriseCreditTransactions)
-    .values({
-      customerId,
-      amount,
-      actionType,
-      description: description || null,
-      balanceAfter: newBalance,
-    })
-    .returning();
+      if (!updated) {
+        throw new Error('INSUFFICIENT_CREDITS');
+      }
 
-  return NextResponse.json({
-    success: true,
-    balance: newBalance,
-    transaction_id: txn.id,
-  });
+      const [txn] = await tx
+        .insert(enterpriseCreditTransactions)
+        .values({
+          customerId,
+          amount,
+          actionType,
+          description: description || null,
+          balanceAfter: updated.creditBalance,
+        })
+        .returning();
+
+      return { balance: updated.creditBalance, transaction_id: txn.id };
+    });
+
+    return NextResponse.json({ success: true, ...result });
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message === 'INSUFFICIENT_CREDITS') {
+      return NextResponse.json({ error: 'Insufficient credits for deduction' }, { status: 400 });
+    }
+    throw err;
+  }
 }
