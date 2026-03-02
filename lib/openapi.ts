@@ -1,20 +1,132 @@
-export const openApiSpec = {
+// ── Shared components ────────────────────────────────────────────────────────
+
+const sharedSchemas = {
+  ProcessingJob: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      status: { type: 'string', enum: ['processing', 'completed', 'failed'] },
+      itemName: { type: 'string', example: 'Blue Denim Jacket' },
+      modelUsed: { type: 'string', example: 'gemini-2.5-flash-image' },
+      creditsDeducted: { type: 'integer', nullable: true, example: 2 },
+      metadata: {
+        type: 'object',
+        nullable: true,
+        properties: {
+          processingTimeMs: { type: 'integer', example: 4200 },
+          inputTokens: { type: 'integer', example: 1024 },
+          outputTokens: { type: 'integer', example: 512 },
+          totalTokens: { type: 'integer', example: 1536 },
+        },
+      },
+      processingStartedAt: { type: 'string', format: 'date-time' },
+      processingCompletedAt: { type: 'string', format: 'date-time', nullable: true },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  Error: {
+    type: 'object',
+    properties: {
+      error: { type: 'string', example: 'Unauthorized' },
+    },
+  },
+};
+
+const adminSchemas = {
+  EnterpriseCustomer: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      name: { type: 'string', example: 'Acme Corp' },
+      slug: { type: 'string', example: 'acme-corp' },
+      contactEmail: { type: 'string', format: 'email', example: 'admin@acme.com' },
+      isActive: { type: 'boolean', example: true },
+      creditBalance: { type: 'integer', example: 100 },
+      creditsPerRequest: { type: 'integer', example: 2 },
+      rpmLimit: { type: 'integer', example: 60 },
+      allowedModels: { type: 'array', items: { type: 'string' }, example: ['gemini-2.5-flash-image'] },
+      defaultModel: { type: 'string', example: 'gemini-2.5-flash-image' },
+      createdAt: { type: 'string', format: 'date-time' },
+      updatedAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  EnterpriseApiKey: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', format: 'uuid' },
+      name: { type: 'string', example: 'Production Key' },
+      keyPrefix: { type: 'string', example: 'fre_live_a3f' },
+      isActive: { type: 'boolean', example: true },
+      lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
+      expiresAt: { type: 'string', format: 'date-time', nullable: true },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  CreditTransaction: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', format: 'uuid' },
+      jobId: { type: 'string', format: 'uuid', nullable: true },
+      amount: { type: 'integer', example: -2, description: 'Negative = deducted, positive = added' },
+      actionType: { type: 'string', enum: ['api_request', 'admin_add', 'admin_deduct'] },
+      description: { type: 'string', nullable: true },
+      balanceAfter: { type: 'integer', example: 48 },
+      createdAt: { type: 'string', format: 'date-time' },
+    },
+  },
+  PaginatedResponse: {
+    type: 'object',
+    properties: {
+      total: { type: 'integer', example: 42 },
+      page: { type: 'integer', example: 1 },
+      limit: { type: 'integer', example: 20 },
+      totalPages: { type: 'integer', example: 3 },
+    },
+  },
+};
+
+const adminParameters = {
+  CustomerId: {
+    name: 'id',
+    in: 'path',
+    required: true,
+    schema: { type: 'string', format: 'uuid' },
+    description: 'Customer ID',
+  },
+  KeyId: {
+    name: 'keyId',
+    in: 'path',
+    required: true,
+    schema: { type: 'string', format: 'uuid' },
+    description: 'API Key ID',
+  },
+  Page: {
+    name: 'page',
+    in: 'query',
+    schema: { type: 'integer', default: 1 },
+  },
+  Limit: {
+    name: 'limit',
+    in: 'query',
+    schema: { type: 'integer', default: 20, maximum: 100 },
+  },
+};
+
+// ── Partner API spec (for enterprise customers) ──────────────────────────────
+
+export const partnerApiSpec = {
   openapi: '3.0.3',
   info: {
     title: 'Fringue Enterprise API',
-    description:
-      'B2B virtual try-on API. Partner endpoints use `X-API-Key`. Admin endpoints use `X-Admin-Secret`.',
+    description: 'B2B virtual try-on API. Authenticate with your `X-API-Key`.',
     version: '1.0.0',
     contact: { email: 'enterprise@fringue.app' },
   },
   servers: [{ url: '/api/v1', description: 'Current server' }],
   tags: [
-    { name: 'Partner', description: 'Partner-facing endpoints (X-API-Key auth)' },
-    { name: 'Admin — Customers', description: 'Customer management (X-Admin-Secret auth)' },
-    { name: 'Admin — API Keys', description: 'API key management (X-Admin-Secret auth)' },
-    { name: 'Admin — Credits', description: 'Credit management (X-Admin-Secret auth)' },
-    { name: 'Admin — Usage', description: 'Usage history (X-Admin-Secret auth)' },
-    { name: 'Admin — Maintenance', description: 'Maintenance operations (X-Admin-Secret auth)' },
+    { name: 'Partner', description: 'Virtual try-on endpoints' },
   ],
   components: {
     securitySchemes: {
@@ -24,125 +136,10 @@ export const openApiSpec = {
         name: 'X-API-Key',
         description: 'Partner API key (format: `fre_live_...`)',
       },
-      AdminSecret: {
-        type: 'apiKey',
-        in: 'header',
-        name: 'X-Admin-Secret',
-        description: 'Admin secret for backoffice operations',
-      },
     },
-    schemas: {
-      EnterpriseCustomer: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          name: { type: 'string', example: 'Acme Corp' },
-          slug: { type: 'string', example: 'acme-corp' },
-          contactEmail: { type: 'string', format: 'email', example: 'admin@acme.com' },
-          isActive: { type: 'boolean', example: true },
-          creditBalance: { type: 'integer', example: 100 },
-          creditsPerRequest: { type: 'integer', example: 2 },
-          rpmLimit: { type: 'integer', example: 60 },
-          allowedModels: { type: 'array', items: { type: 'string' }, example: ['gemini-2.5-flash-image'] },
-          defaultModel: { type: 'string', example: 'gemini-2.5-flash-image' },
-          createdAt: { type: 'string', format: 'date-time' },
-          updatedAt: { type: 'string', format: 'date-time' },
-        },
-      },
-      EnterpriseApiKey: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          customerId: { type: 'string', format: 'uuid' },
-          name: { type: 'string', example: 'Production Key' },
-          keyPrefix: { type: 'string', example: 'fre_live_a3f' },
-          isActive: { type: 'boolean', example: true },
-          lastUsedAt: { type: 'string', format: 'date-time', nullable: true },
-          expiresAt: { type: 'string', format: 'date-time', nullable: true },
-          createdAt: { type: 'string', format: 'date-time' },
-        },
-      },
-      ProcessingJob: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          status: { type: 'string', enum: ['processing', 'completed', 'failed'] },
-          itemName: { type: 'string', example: 'Blue Denim Jacket' },
-          modelUsed: { type: 'string', example: 'gemini-2.5-flash-image' },
-          creditsDeducted: { type: 'integer', nullable: true, example: 2 },
-          metadata: {
-            type: 'object',
-            nullable: true,
-            properties: {
-              processingTimeMs: { type: 'integer', example: 4200 },
-              inputTokens: { type: 'integer', example: 1024 },
-              outputTokens: { type: 'integer', example: 512 },
-              totalTokens: { type: 'integer', example: 1536 },
-            },
-          },
-          processingStartedAt: { type: 'string', format: 'date-time' },
-          processingCompletedAt: { type: 'string', format: 'date-time', nullable: true },
-          createdAt: { type: 'string', format: 'date-time' },
-        },
-      },
-      CreditTransaction: {
-        type: 'object',
-        properties: {
-          id: { type: 'string', format: 'uuid' },
-          customerId: { type: 'string', format: 'uuid' },
-          jobId: { type: 'string', format: 'uuid', nullable: true },
-          amount: { type: 'integer', example: -2, description: 'Negative = deducted, positive = added' },
-          actionType: { type: 'string', enum: ['api_request', 'admin_add', 'admin_deduct'] },
-          description: { type: 'string', nullable: true },
-          balanceAfter: { type: 'integer', example: 48 },
-          createdAt: { type: 'string', format: 'date-time' },
-        },
-      },
-      PaginatedResponse: {
-        type: 'object',
-        properties: {
-          total: { type: 'integer', example: 42 },
-          page: { type: 'integer', example: 1 },
-          limit: { type: 'integer', example: 20 },
-          totalPages: { type: 'integer', example: 3 },
-        },
-      },
-      Error: {
-        type: 'object',
-        properties: {
-          error: { type: 'string', example: 'Unauthorized' },
-        },
-      },
-    },
-    parameters: {
-      CustomerId: {
-        name: 'id',
-        in: 'path',
-        required: true,
-        schema: { type: 'string', format: 'uuid' },
-        description: 'Customer ID',
-      },
-      KeyId: {
-        name: 'keyId',
-        in: 'path',
-        required: true,
-        schema: { type: 'string', format: 'uuid' },
-        description: 'API Key ID',
-      },
-      Page: {
-        name: 'page',
-        in: 'query',
-        schema: { type: 'integer', default: 1 },
-      },
-      Limit: {
-        name: 'limit',
-        in: 'query',
-        schema: { type: 'integer', default: 20, maximum: 100 },
-      },
-    },
+    schemas: sharedSchemas,
   },
   paths: {
-    // ── Partner ─────────────────────────────────────────────────────────────
     '/try-on': {
       post: {
         tags: ['Partner'],
@@ -247,8 +244,40 @@ export const openApiSpec = {
         },
       },
     },
+  },
+};
 
-    // ── Admin — Customers ────────────────────────────────────────────────────
+// ── Admin API spec (for backoffice use only) ─────────────────────────────────
+
+export const adminApiSpec = {
+  openapi: '3.0.3',
+  info: {
+    title: 'Fringue Enterprise API — Admin',
+    description: 'Internal backoffice API. All endpoints require `X-Admin-Secret`.',
+    version: '1.0.0',
+    contact: { email: 'enterprise@fringue.app' },
+  },
+  servers: [{ url: '/api/v1', description: 'Current server' }],
+  tags: [
+    { name: 'Admin — Customers', description: 'Customer management' },
+    { name: 'Admin — API Keys', description: 'API key management' },
+    { name: 'Admin — Credits', description: 'Credit management' },
+    { name: 'Admin — Usage', description: 'Usage history' },
+    { name: 'Admin — Maintenance', description: 'Maintenance operations' },
+  ],
+  components: {
+    securitySchemes: {
+      AdminSecret: {
+        type: 'apiKey',
+        in: 'header',
+        name: 'X-Admin-Secret',
+        description: 'Admin secret for backoffice operations',
+      },
+    },
+    schemas: { ...sharedSchemas, ...adminSchemas },
+    parameters: adminParameters,
+  },
+  paths: {
     '/admin/customers': {
       get: {
         tags: ['Admin — Customers'],
@@ -358,8 +387,6 @@ export const openApiSpec = {
         },
       },
     },
-
-    // ── Admin — API Keys ────────────────────────────────────────────────────
     '/admin/customers/{id}/api-keys': {
       get: {
         tags: ['Admin — API Keys'],
@@ -443,8 +470,6 @@ export const openApiSpec = {
         },
       },
     },
-
-    // ── Admin — Credits ─────────────────────────────────────────────────────
     '/admin/customers/{id}/credits': {
       get: {
         tags: ['Admin — Credits'],
@@ -508,8 +533,6 @@ export const openApiSpec = {
         },
       },
     },
-
-    // ── Admin — Usage ────────────────────────────────────────────────────────
     '/admin/customers/{id}/usage': {
       get: {
         tags: ['Admin — Usage'],
@@ -539,8 +562,6 @@ export const openApiSpec = {
         },
       },
     },
-
-    // ── Admin — Maintenance ──────────────────────────────────────────────────
     '/admin/cleanup': {
       post: {
         tags: ['Admin — Maintenance'],
