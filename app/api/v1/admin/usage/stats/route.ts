@@ -29,6 +29,23 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  if (!DATE_RE.test(from) || !DATE_RE.test(to)) {
+    return NextResponse.json(
+      { error: 'from and to must be in YYYY-MM-DD format' },
+      { status: 400 }
+    );
+  }
+
+  if (customerId && !UUID_RE.test(customerId)) {
+    return NextResponse.json(
+      { error: 'customerId must be a valid UUID' },
+      { status: 400 }
+    );
+  }
+
   // Validate groupBy — use switch to avoid SQL injection
   let dateBucket: SQL<string>;
   switch (groupByParam) {

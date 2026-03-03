@@ -150,7 +150,6 @@ export const enterpriseDailyStats = pgTable(
   },
   (t) => [
     unique('uq_daily_stats_customer_date').on(t.customerId, t.date),
-    index('idx_daily_stats_customer_date').on(t.customerId, t.date),
     index('idx_daily_stats_date').on(t.date),
   ]
 );
