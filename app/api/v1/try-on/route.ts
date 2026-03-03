@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/db';
-import { enterpriseProcessingJobs } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { enterpriseProcessingJobs, enterpriseDailyStats } from '@/db/schema';
+import { eq, sql } from 'drizzle-orm';
 import { verifyEnterpriseKey, checkAndIncrementRpm } from '@/lib/enterprise-auth';
 import { deductEnterpriseCredits } from '@/lib/enterprise-credits';
 import { generateImageWithGemini, AI_PROMPTS } from '@/lib/ai';
@@ -114,6 +114,23 @@ export async function POST(request: NextRequest) {
         })
         .where(eq(enterpriseProcessingJobs.id, processingId));
 
+      // Upsert daily stats — fire-and-forget, never blocks the response
+      db.insert(enterpriseDailyStats)
+        .values({
+          customerId: customer.id,
+          date: sql`CURRENT_DATE`,
+          successCount: 1,
+          totalCredits: customer.creditsPerRequest,
+        })
+        .onConflictDoUpdate({
+          target: [enterpriseDailyStats.customerId, enterpriseDailyStats.date],
+          set: {
+            successCount: sql`${enterpriseDailyStats.successCount} + 1`,
+            totalCredits: sql`${enterpriseDailyStats.totalCredits} + ${customer.creditsPerRequest}`,
+          },
+        })
+        .catch(() => {});
+
       await send({
         step: 'completed',
         progress: 100,
@@ -134,6 +151,21 @@ export async function POST(request: NextRequest) {
           .update(enterpriseProcessingJobs)
           .set({ status: 'failed', errorMessage: message })
           .where(eq(enterpriseProcessingJobs.id, processingId))
+          .catch(() => {});
+
+        // Upsert daily stats — fire-and-forget, never blocks the response
+        db.insert(enterpriseDailyStats)
+          .values({
+            customerId: customer.id,
+            date: sql`CURRENT_DATE`,
+            failedCount: 1,
+          })
+          .onConflictDoUpdate({
+            target: [enterpriseDailyStats.customerId, enterpriseDailyStats.date],
+            set: {
+              failedCount: sql`${enterpriseDailyStats.failedCount} + 1`,
+            },
+          })
           .catch(() => {});
       }
 
