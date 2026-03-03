@@ -5,6 +5,7 @@ import {
   integer,
   boolean,
   timestamp,
+  date,
   jsonb,
   unique,
   index,
@@ -135,12 +136,32 @@ export const enterpriseCreditTransactions = pgTable(
   ]
 );
 
+// ─── enterprise_daily_stats ───────────────────────────────────────────────
+
+export const enterpriseDailyStats = pgTable(
+  'enterprise_daily_stats',
+  {
+    id:           uuid('id').primaryKey().defaultRandom(),
+    customerId:   uuid('customer_id').notNull().references(() => enterpriseCustomers.id, { onDelete: 'cascade' }),
+    date:         date('date').notNull(),
+    successCount: integer('success_count').notNull().default(0),
+    failedCount:  integer('failed_count').notNull().default(0),
+    totalCredits: integer('total_credits').notNull().default(0),
+  },
+  (t) => [
+    unique('uq_daily_stats_customer_date').on(t.customerId, t.date),
+    index('idx_daily_stats_customer_date').on(t.customerId, t.date),
+    index('idx_daily_stats_date').on(t.date),
+  ]
+);
+
 // ─── Relations ────────────────────────────────────────────────────────────
 
 export const enterpriseCustomersRelations = relations(enterpriseCustomers, ({ many }) => ({
   apiKeys: many(enterpriseApiKeys),
   processingJobs: many(enterpriseProcessingJobs),
   creditTransactions: many(enterpriseCreditTransactions),
+  dailyStats: many(enterpriseDailyStats),
 }));
 
 export const enterpriseApiKeysRelations = relations(enterpriseApiKeys, ({ one, many }) => ({
@@ -181,6 +202,13 @@ export const enterpriseCreditTransactionsRelations = relations(enterpriseCreditT
   }),
 }));
 
+export const enterpriseDailyStatsRelations = relations(enterpriseDailyStats, ({ one }) => ({
+  customer: one(enterpriseCustomers, {
+    fields: [enterpriseDailyStats.customerId],
+    references: [enterpriseCustomers.id],
+  }),
+}));
+
 // ─── Type exports ─────────────────────────────────────────────────────────
 
 export type EnterpriseCustomer = typeof enterpriseCustomers.$inferSelect;
@@ -188,3 +216,5 @@ export type NewEnterpriseCustomer = typeof enterpriseCustomers.$inferInsert;
 export type EnterpriseApiKey = typeof enterpriseApiKeys.$inferSelect;
 export type EnterpriseProcessingJob = typeof enterpriseProcessingJobs.$inferSelect;
 export type EnterpriseCreditTransaction = typeof enterpriseCreditTransactions.$inferSelect;
+export type EnterpriseDailyStat = typeof enterpriseDailyStats.$inferSelect;
+export type NewEnterpriseDailyStat = typeof enterpriseDailyStats.$inferInsert;
